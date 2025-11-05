@@ -7,5 +7,7 @@
 pub mod ansi;
 pub mod html;
 pub mod json;
+pub mod json_block;
 pub mod native;
 pub mod qmd;
+pub mod r;

@@ -49,6 +49,9 @@ struct Args {
         default_value_t = false
     )]
     _internal_report_error_state: bool,
+
+    #[arg(long = "line-number")]
+    line_number: Option<usize>,
 }
 
 fn print_whole_tree<T: Write>(cursor: &mut tree_sitter_qmd::MarkdownCursor, buf: &mut T) {
@@ -174,8 +177,17 @@ fn main() {
     let mut buf = Vec::new();
     match args.to.as_str() {
         "json" => writers::json::write(&pandoc, &context, &mut buf),
+        "json-block" => {
+            if let Some(line_number) = args.line_number {
+                writers::json_block::write(&pandoc, &context, line_number, &mut buf)
+            } else {
+                eprintln!("--line-number is required when using --to json-block");
+                std::process::exit(1);
+            }
+        }
         "native" => writers::native::write(&pandoc, &mut buf),
         "markdown" | "qmd" => writers::qmd::write(&pandoc, &mut buf),
+        "R" => writers::r::write(&pandoc, &context, &mut buf),
         "html" => writers::html::write(&pandoc, &mut buf),
         #[cfg(feature = "terminal-support")]
         "ansi" => writers::ansi::write(&pandoc, &mut buf),
