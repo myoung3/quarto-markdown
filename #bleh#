@@ -1,0 +1,35 @@
+;; testelark.el
+(message "Starting elark test...")
+
+;; Initialize package system to find dependencies
+(require 'package)
+(package-initialize)
+
+
+(add-to-list 'load-path (file-name-directory (or load-file-name buffer-file-name)))
+
+(require 'elark)
+
+(setq elark-ark-project-dir "/home/michael/repos/ark")
+(setq elark-ark-log-file "/tmp/ark.log")
+
+(princ "elark loaded.")
+
+(let* ((project-root default-directory)
+       (process-info (elark--start-kernel project-root)))
+  (sleep-for 1)
+  (if (and process-info
+           (processp (plist-get process-info :process))
+           (file-exists-p (plist-get process-info :connection-file)))
+      (progn
+        (princ "elark--start-kernel SUCCESS")
+        (message "Process info: %S" process-info)
+        (princ "\n--- Ark Kernel Output ---\n")
+        (with-current-buffer (plist-get process-info :output-buffer)
+          (princ (buffer-string)))
+        (princ "\n--- End Ark Kernel Output ---\n"))
+    (error "elark--start-kernel FAILED. process-info: %S" process-info))
+  (elark-kill-kernel project-root)
+  (princ "Kernel killed."))
+
+(princ "Test finished successfully.")

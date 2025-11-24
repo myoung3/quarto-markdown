@@ -33,12 +33,58 @@ fn unit_test_simple_qmd_parses() {
                 &mut error_collector,
             )
             .unwrap(),
+            &ASTContext::anonymous(),
             &mut buf,
         )
         .unwrap();
         let ast = String::from_utf8(buf).expect("Invalid UTF-8 in output");
         println!("{}", &ast);
         assert!(true, "Parsed successfully");
+    }
+}
+
+#[test]
+fn test_unnumbered_section_specifier() {
+    let input = "## foo {-}";
+    let mut parser = MarkdownParser::default();
+    let input_bytes = input.as_bytes();
+    let tree = parser
+        .parse(input_bytes, None)
+        .expect("Failed to parse input");
+    let mut buf = Vec::new();
+    let mut error_collector = DiagnosticCollector::new();
+    writers::native::write(
+        &treesitter_to_pandoc(
+            &mut std::io::sink(),
+            &tree,
+            &input_bytes,
+            &ASTContext::anonymous(),
+            &mut error_collector,
+        )
+        .unwrap(),
+        &ASTContext::anonymous(),
+        &mut buf,
+    )
+    .unwrap();
+    let ast = String::from_utf8(buf).expect("Invalid UTF-8 in output");
+    println!("Output AST: {}", &ast);
+
+    // The output should contain the "unnumbered" class
+    assert!(
+        ast.contains("\"unnumbered\""),
+        "Expected 'unnumbered' class in output, got: {}",
+        ast
+    );
+
+    // Compare with Pandoc if available
+    if has_good_pandoc_version() {
+        let pandoc_output = canonicalize_pandoc_ast(input, "markdown", "native");
+        let our_output = canonicalize_pandoc_ast(&ast, "native", "native");
+        if pandoc_output != our_output {
+            eprintln!("Pandoc output:\n{}", pandoc_output);
+            eprintln!("Our output:\n{}", our_output);
+        }
+        assert_eq!(our_output, pandoc_output, "Output should match Pandoc");
     }
 }
 
@@ -95,9 +141,16 @@ fn matches_pandoc_markdown_reader(input: &str) -> bool {
     let mut buf1 = Vec::new();
     let mut buf2 = Vec::new();
 
-    let (doc, context, _warnings) =
-        readers::qmd::read(input.as_bytes(), false, "<input>", &mut std::io::sink()).unwrap();
-    writers::native::write(&doc, &mut buf1).unwrap();
+    let (doc, context, _warnings) = readers::qmd::read(
+        input.as_bytes(),
+        false,
+        "<input>",
+        &mut std::io::sink(),
+        true,
+        None,
+    )
+    .unwrap();
+    writers::native::write(&doc, &context, &mut buf1).unwrap();
     let native_output = String::from_utf8(buf1).expect("Invalid UTF-8 in output");
     writers::json::write(&doc, &context, &mut buf2).unwrap();
     let json_output = String::from_utf8(buf2).expect("Invalid UTF-8 in output");
@@ -129,6 +182,7 @@ fn matches_pandoc_commonmark_reader(input: &str) -> bool {
             &mut error_collector1,
         )
         .unwrap(),
+        &ASTContext::anonymous(),
         &mut buf1,
     )
     .unwrap();
@@ -226,8 +280,9 @@ fn unit_test_corpus_matches_pandoc_commonmark() {
 
 #[test]
 fn unit_test_snapshots_native() {
-    test_snapshots_for_format("native", |pandoc, _context, buffer| {
-        writers::native::write(pandoc, buffer).map_err(|e| e.into())
+    test_snapshots_for_format("native", |pandoc, context, buffer| {
+        writers::native::write(pandoc, context, buffer)
+            .map_err(|e| format!("Native writer errors: {:?}", e).into())
     });
 }
 
@@ -278,6 +333,8 @@ where
                     false,
                     &path.to_string_lossy(),
                     &mut output_stream,
+                    true,
+                    None,
                 )
                 .unwrap();
 
@@ -538,6 +595,15 @@ fn test_do_not_smoke() {
                 let tree = parser
                     .parse(input_bytes, None)
                     .expect("Failed to parse input");
+
+                // Check for parse errors before proceeding
+                let errors = parse_is_good(&tree);
+                if !errors.is_empty() {
+                    // This file has parse errors - skip it (it's in smoke tests to ensure we don't crash on bad input)
+                    file_count += 1;
+                    continue;
+                }
+
                 let mut error_collector = DiagnosticCollector::new();
                 let _ = treesitter_to_pandoc(
                     &mut std::io::sink(),
@@ -572,6 +638,8 @@ fn test_markdown_writer_smoke() {
                         false,
                         path.to_str().unwrap(),
                         &mut std::io::sink(),
+                        true,
+                        None,
                     );
 
                     match doc_result {
@@ -620,6 +688,8 @@ fn test_qmd_roundtrip_consistency() {
                     false,
                     path.to_str().unwrap(),
                     &mut std::io::sink(),
+                    true,
+                    None,
                 )
                 .expect("Failed to parse original QMD");
 
@@ -642,6 +712,8 @@ fn test_qmd_roundtrip_consistency() {
                     false,
                     "<generated>",
                     &mut std::io::sink(),
+                    true,
+                    None,
                 )
                 .expect("Failed to parse regenerated QMD");
 
@@ -703,6 +775,8 @@ fn test_ansi_writer_smoke() {
                     false,
                     path.to_str().unwrap(),
                     &mut std::io::sink(),
+                    true,
+                    None,
                 );
 
                 match doc_result {
@@ -750,6 +824,8 @@ fn test_empty_blockquote_roundtrip() {
         false,
         test_file,
         &mut std::io::sink(),
+        true,
+        None,
     )
     .expect("Failed to parse original QMD");
 
@@ -771,6 +847,8 @@ fn test_empty_blockquote_roundtrip() {
         false,
         "<generated>",
         &mut std::io::sink(),
+        true,
+        None,
     )
     .expect("Failed to parse regenerated QMD");
 

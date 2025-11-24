@@ -5,14 +5,19 @@
 
 use crate::readers;
 use crate::utils::output::VerboseOutput;
+use crate::writers::json::JsonConfig;
 use std::io;
 
 fn pandoc_to_json(
     doc: &crate::pandoc::Pandoc,
     context: &crate::pandoc::ast_context::ASTContext,
+    include_resolved_locations: bool,
 ) -> Result<String, String> {
     let mut buf = Vec::new();
-    match crate::writers::json::write(doc, context, &mut buf) {
+    let config = JsonConfig {
+        include_inline_locations: include_resolved_locations,
+    };
+    match crate::writers::json::write_with_config(doc, context, &mut buf, &config) {
         Ok(_) => {
             // Nothing to do
         }
@@ -37,7 +42,7 @@ pub fn qmd_to_pandoc(
     Vec<String>,
 > {
     let mut output = VerboseOutput::Sink(io::sink());
-    match readers::qmd::read(input, false, "<input>", &mut output) {
+    match readers::qmd::read(input, false, "<input>", &mut output, true, None) {
         Ok((pandoc, context, _warnings)) => {
             // TODO: Decide how to handle warnings in WASM context
             Ok((pandoc, context))
@@ -49,7 +54,7 @@ pub fn qmd_to_pandoc(
     }
 }
 
-pub fn parse_qmd(input: &[u8]) -> String {
+pub fn parse_qmd(input: &[u8], include_resolved_locations: bool) -> String {
     let (pandoc, context) = qmd_to_pandoc(input).unwrap();
-    pandoc_to_json(&pandoc, &context).unwrap()
+    pandoc_to_json(&pandoc, &context, include_resolved_locations).unwrap()
 }

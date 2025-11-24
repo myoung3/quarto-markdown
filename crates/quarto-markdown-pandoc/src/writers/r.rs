@@ -68,10 +68,12 @@ fn get_block_lines(block: &Block, context: &ASTContext) -> (usize, usize) {
     if let Some((file_id, start_offset, end_offset)) = get_original_source_info(source_info) {
         if let Some(file) = context.source_context.get_file(file_id) {
             if let Some(file_info) = &file.file_info {
-                let start_loc = file_info.offset_to_location(start_offset);
-                let end_loc = file_info.offset_to_location(end_offset);
-                // Return 0-indexed row numbers
-                return (start_loc.unwrap().row, end_loc.unwrap().row);
+                if let Some(content) = &file.content {
+                    let start_loc = file_info.offset_to_location(start_offset, content);
+                    let end_loc = file_info.offset_to_location(end_offset, content);
+                    // Return 0-indexed row numbers
+                    return (start_loc.unwrap().row, end_loc.unwrap().row);
+                }
             }
         }
     }

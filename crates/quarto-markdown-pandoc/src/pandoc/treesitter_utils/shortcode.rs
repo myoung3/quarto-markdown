@@ -23,10 +23,8 @@ pub fn process_shortcode_string_arg(
 ) -> PandocNativeIntermediate {
     let id = node.utf8_text(input_bytes).unwrap().to_string();
     let source_info = node_source_info_with_context(node, context);
-    let range = crate::pandoc::source_map_compat::source_info_to_qsm_range_or_fallback(
-        &source_info,
-        context,
-    );
+    let range =
+        crate::pandoc::location::source_info_to_qsm_range_or_fallback(&source_info, context);
     PandocNativeIntermediate::IntermediateShortcodeArg(ShortcodeArg::String(id), range)
 }
 
@@ -43,10 +41,8 @@ pub fn process_shortcode_string(
         )
     };
     let source_info = node_source_info_with_context(node, context);
-    let range = crate::pandoc::source_map_compat::source_info_to_qsm_range_or_fallback(
-        &source_info,
-        context,
-    );
+    let range =
+        crate::pandoc::location::source_info_to_qsm_range_or_fallback(&source_info, context);
     PandocNativeIntermediate::IntermediateShortcodeArg(ShortcodeArg::String(id), range)
 }
 
@@ -109,10 +105,8 @@ pub fn process_shortcode_keyword_param<T: Write>(
         }
     }
     let source_info = node_source_info_with_context(node, context);
-    let range = crate::pandoc::source_map_compat::source_info_to_qsm_range_or_fallback(
-        &source_info,
-        context,
-    );
+    let range =
+        crate::pandoc::location::source_info_to_qsm_range_or_fallback(&source_info, context);
     PandocNativeIntermediate::IntermediateShortcodeArg(ShortcodeArg::KeyValue(result), range)
 }
 
@@ -160,6 +154,12 @@ pub fn process_shortcode(
             | ("shortcode_boolean", PandocNativeIntermediate::IntermediateShortcodeArg(arg, _)) => {
                 positional_args.push(arg);
             }
+            ("key_value_specifier", PandocNativeIntermediate::IntermediateKeyValueSpec(specs)) => {
+                // Handle key-value pairs from key_value_specifier node
+                for (key, value, _, _) in specs {
+                    keyword_args.insert(key, ShortcodeArg::String(value));
+                }
+            }
             ("shortcode_delimiter", _) => {
                 // This is a marker node, we don't need to do anything with it
             }
@@ -191,10 +191,8 @@ pub fn process_shortcode_boolean(
         _ => panic!("Unexpected shortcode_boolean value: {}", value),
     };
     let source_info = node_source_info_with_context(node, context);
-    let range = crate::pandoc::source_map_compat::source_info_to_qsm_range_or_fallback(
-        &source_info,
-        context,
-    );
+    let range =
+        crate::pandoc::location::source_info_to_qsm_range_or_fallback(&source_info, context);
     PandocNativeIntermediate::IntermediateShortcodeArg(value, range)
 }
 
@@ -205,10 +203,8 @@ pub fn process_shortcode_number(
 ) -> PandocNativeIntermediate {
     let value = node.utf8_text(input_bytes).unwrap();
     let source_info = node_source_info_with_context(node, context);
-    let range = crate::pandoc::source_map_compat::source_info_to_qsm_range_or_fallback(
-        &source_info,
-        context,
-    );
+    let range =
+        crate::pandoc::location::source_info_to_qsm_range_or_fallback(&source_info, context);
     let Ok(num) = value.parse::<f64>() else {
         panic!("Invalid shortcode_number: {}", value)
     };

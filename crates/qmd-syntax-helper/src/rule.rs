@@ -79,8 +79,14 @@ impl RuleRegistry {
         registry.register(Arc::new(
             crate::diagnostics::parse_check::ParseChecker::new()?,
         ));
+        registry.register(Arc::new(
+            crate::diagnostics::q_2_30::Q230Checker::new()?,
+        ));
 
         // Register conversion rules
+        registry.register(Arc::new(
+            crate::conversions::apostrophe_quotes::ApostropheQuotesConverter::new()?,
+        ));
         registry.register(Arc::new(
             crate::conversions::attribute_ordering::AttributeOrderingConverter::new()?,
         ));
@@ -88,11 +94,27 @@ impl RuleRegistry {
             crate::conversions::grid_tables::GridTableConverter::new()?,
         ));
         registry.register(Arc::new(
-            crate::conversions::div_whitespace::DivWhitespaceConverter::new()?,
-        ));
-        registry.register(Arc::new(
             crate::conversions::definition_lists::DefinitionListConverter::new()?,
         ));
+        registry.register(Arc::new(crate::conversions::q_2_5::Q25Converter::new()?));
+        registry.register(Arc::new(crate::conversions::q_2_7::Q27Converter::new()?));
+        registry.register(Arc::new(crate::conversions::q_2_11::Q211Converter::new()?));
+        registry.register(Arc::new(crate::conversions::q_2_12::Q212Converter::new()?));
+        registry.register(Arc::new(crate::conversions::q_2_13::Q213Converter::new()?));
+        registry.register(Arc::new(crate::conversions::q_2_15::Q215Converter::new()?));
+        registry.register(Arc::new(crate::conversions::q_2_16::Q216Converter::new()?));
+        registry.register(Arc::new(crate::conversions::q_2_17::Q217Converter::new()?));
+        registry.register(Arc::new(crate::conversions::q_2_18::Q218Converter::new()?));
+        registry.register(Arc::new(crate::conversions::q_2_19::Q219Converter::new()?));
+        registry.register(Arc::new(crate::conversions::q_2_20::Q220Converter::new()?));
+        registry.register(Arc::new(crate::conversions::q_2_21::Q221Converter::new()?));
+        registry.register(Arc::new(crate::conversions::q_2_22::Q222Converter::new()?));
+        registry.register(Arc::new(crate::conversions::q_2_23::Q223Converter::new()?));
+        registry.register(Arc::new(crate::conversions::q_2_24::Q224Converter::new()?));
+        registry.register(Arc::new(crate::conversions::q_2_25::Q225Converter::new()?));
+        registry.register(Arc::new(crate::conversions::q_2_26::Q226Converter::new()?));
+        registry.register(Arc::new(crate::conversions::q_2_28::Q228Converter::new()?));
+        registry.register(Arc::new(crate::conversions::q_2_33::Q233Converter::new()?));
 
         Ok(registry)
     }

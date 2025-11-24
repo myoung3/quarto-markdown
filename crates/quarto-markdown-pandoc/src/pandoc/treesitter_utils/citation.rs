@@ -7,8 +7,8 @@
  */
 
 use crate::pandoc::ast_context::ASTContext;
-use crate::pandoc::inline::{Citation, CitationMode, Cite, Inline, Str};
-use crate::pandoc::source_map_compat;
+use crate::pandoc::inline::{Citation, CitationMode, Cite, Inline, Space, Str};
+use crate::pandoc::location::node_source_info_with_context;
 
 use super::pandocnativeintermediate::PandocNativeIntermediate;
 
@@ -29,9 +29,9 @@ where
             citation_type = CitationMode::SuppressAuthor;
             if let PandocNativeIntermediate::IntermediateBaseText(id, range) = child {
                 citation_id = id;
-                citation_id_source = Some(source_map_compat::range_to_source_info_with_context(
-                    &range, context,
-                ));
+                citation_id_source = Some(
+                    crate::pandoc::location::range_to_source_info_with_context(&range, context),
+                );
             } else {
                 panic!(
                     "Expected BaseText in citation_id_suppress_author, got {:?}",
@@ -42,9 +42,9 @@ where
             citation_type = CitationMode::AuthorInText;
             if let PandocNativeIntermediate::IntermediateBaseText(id, range) = child {
                 citation_id = id;
-                citation_id_source = Some(source_map_compat::range_to_source_info_with_context(
-                    &range, context,
-                ));
+                citation_id_source = Some(
+                    crate::pandoc::location::range_to_source_info_with_context(&range, context),
+                );
             } else {
                 panic!(
                     "Expected BaseText in citation_id_author_in_text, got {:?}",
@@ -53,7 +53,13 @@ where
             }
         }
     }
-    PandocNativeIntermediate::IntermediateInline(Inline::Cite(Cite {
+
+    // Get the citation text and check for leading whitespace
+    let text = node_text();
+    let has_leading_space = text.starts_with(char::is_whitespace);
+    let trimmed_text = text.trim().to_string();
+
+    let cite = Inline::Cite(Cite {
         citations: vec![Citation {
             id: citation_id,
             prefix: vec![],
@@ -64,9 +70,21 @@ where
             id_source: citation_id_source,
         }],
         content: vec![Inline::Str(Str {
-            text: node_text(),
-            source_info: source_map_compat::node_to_source_info_with_context(node, context),
+            text: trimmed_text,
+            source_info: crate::pandoc::location::node_source_info_with_context(node, context),
         })],
-        source_info: source_map_compat::node_to_source_info_with_context(node, context),
-    }))
+        source_info: crate::pandoc::location::node_source_info_with_context(node, context),
+    });
+
+    // Build result with leading Space if needed to distinguish "Hi @cite" from "Hi@cite"
+    if has_leading_space {
+        PandocNativeIntermediate::IntermediateInlines(vec![
+            Inline::Space(Space {
+                source_info: node_source_info_with_context(node, context),
+            }),
+            cite,
+        ])
+    } else {
+        PandocNativeIntermediate::IntermediateInline(cite)
+    }
 }

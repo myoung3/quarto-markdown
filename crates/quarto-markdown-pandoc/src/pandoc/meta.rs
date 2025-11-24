@@ -9,7 +9,6 @@ use crate::pandoc::location::empty_source_info;
 use crate::readers;
 use crate::{pandoc::RawBlock, utils::output::VerboseOutput};
 use hashlink::LinkedHashMap;
-use std::collections::HashMap;
 use std::{io, mem};
 use yaml_rust2::parser::{Event, MarkedEventReceiver, Parser};
 
@@ -245,7 +244,14 @@ fn parse_yaml_string_as_markdown(
     use quarto_error_reporting::DiagnosticMessageBuilder;
 
     let mut output_stream = VerboseOutput::Sink(io::sink());
-    let result = readers::qmd::read(value.as_bytes(), false, "<metadata>", &mut output_stream);
+    let result = readers::qmd::read(
+        value.as_bytes(),
+        false,
+        "<metadata>",
+        &mut output_stream,
+        true,
+        Some(source_info.clone()),
+    );
 
     match result {
         Ok((mut pandoc, _, warnings)) => {
@@ -288,7 +294,7 @@ fn parse_yaml_string_as_markdown(
                     attr: (
                         String::new(),
                         vec!["yaml-markdown-syntax-error".to_string()],
-                        HashMap::new(),
+                        LinkedHashMap::new(),
                     ),
                     content: vec![Inline::Str(Str {
                         text: value.to_string(),
@@ -304,7 +310,7 @@ fn parse_yaml_string_as_markdown(
             } else {
                 // Untagged: WARN on parse failure
                 let diagnostic = DiagnosticMessageBuilder::warning("Failed to parse metadata value as markdown")
-                    .with_code("Q-1-101")
+                    .with_code("Q-1-20")
                     .with_location(source_info.clone())
                     .problem(format!("Could not parse '{}' as markdown", value))
                     .add_hint("Add the `!str` tag to treat this as a plain string, or fix the markdown syntax")
@@ -318,7 +324,7 @@ fn parse_yaml_string_as_markdown(
                     attr: (
                         String::new(),
                         vec!["yaml-markdown-syntax-error".to_string()],
-                        HashMap::new(),
+                        LinkedHashMap::new(),
                     ),
                     content: vec![Inline::Str(Str {
                         text: value.to_string(),
@@ -424,7 +430,7 @@ pub fn yaml_to_meta_with_source_info(
                     _ => {
                         // Other tags (!glob, !expr, etc.): Keep current behavior
                         // Wrap in Span with class "yaml-tagged-string" and tag attribute
-                        let mut attributes = HashMap::new();
+                        let mut attributes = LinkedHashMap::new();
                         attributes.insert("tag".to_string(), tag_suffix.clone());
 
                         let span = Span {
@@ -556,7 +562,7 @@ impl YamlEventHandler {
         // Check if this scalar has a YAML tag (like !path, !glob, !str)
         if let Some(t) = tag {
             // Tagged strings bypass markdown parsing - wrap in Span immediately
-            let mut attributes = HashMap::new();
+            let mut attributes = LinkedHashMap::new();
             attributes.insert("tag".to_string(), t.suffix.clone());
 
             let span = Span {
@@ -715,8 +721,14 @@ pub fn parse_metadata_strings_with_source_info(
     match meta {
         MetaValueWithSourceInfo::MetaString { value, source_info } => {
             let mut output_stream = VerboseOutput::Sink(io::sink());
-            let result =
-                readers::qmd::read(value.as_bytes(), false, "<metadata>", &mut output_stream);
+            let result = readers::qmd::read(
+                value.as_bytes(),
+                false,
+                "<metadata>",
+                &mut output_stream,
+                true,
+                Some(source_info.clone()),
+            );
             match result {
                 Ok((mut pandoc, _context, warnings)) => {
                     // Propagate warnings from recursive parse
@@ -749,7 +761,7 @@ pub fn parse_metadata_strings_with_source_info(
                         attr: (
                             String::new(),
                             vec!["yaml-markdown-syntax-error".to_string()],
-                            HashMap::new(),
+                            LinkedHashMap::new(),
                         ),
                         content: vec![Inline::Str(Str {
                             text: value.clone(),
@@ -806,7 +818,14 @@ pub fn parse_metadata_strings(meta: MetaValue, outer_metadata: &mut Meta) -> Met
     match meta {
         MetaValue::MetaString(s) => {
             let mut output_stream = VerboseOutput::Sink(io::sink());
-            let result = readers::qmd::read(s.as_bytes(), false, "<metadata>", &mut output_stream);
+            let result = readers::qmd::read(
+                s.as_bytes(),
+                false,
+                "<metadata>",
+                &mut output_stream,
+                true,
+                None,
+            );
             match result {
                 Ok((mut pandoc, _context, _warnings)) => {
                     // TODO: Handle warnings from recursive parse
@@ -835,7 +854,7 @@ pub fn parse_metadata_strings(meta: MetaValue, outer_metadata: &mut Meta) -> Met
                         attr: (
                             String::new(),
                             vec!["yaml-markdown-syntax-error".to_string()],
-                            HashMap::new(),
+                            LinkedHashMap::new(),
                         ),
                         content: vec![Inline::Str(Str {
                             text: s.clone(),

@@ -40,6 +40,12 @@ struct Args {
     #[arg(long = "json-errors")]
     json_errors: bool,
 
+    #[arg(long = "no-prune-errors")]
+    no_prune_errors: bool,
+
+    #[arg(long = "json-source-location", value_parser = ["full"])]
+    json_source_location: Option<String>,
+
     #[arg(short = 'o', long = "output")]
     output: Option<String>,
 
@@ -121,6 +127,8 @@ fn main() {
                 args.loose,
                 input_filename,
                 &mut output_stream,
+                !args.no_prune_errors, // prune_errors = !no_prune_errors
+                None,
             );
             match result {
                 Ok((pandoc, context, warnings)) => {
@@ -175,28 +183,98 @@ fn main() {
     };
 
     let mut buf = Vec::new();
-    match args.to.as_str() {
-        "json" => writers::json::write(&pandoc, &context, &mut buf),
+    let writer_result = match args.to.as_str() {
+        "json" => {
+            let json_config = writers::json::JsonConfig {
+                include_inline_locations: args
+                    .json_source_location
+                    .as_ref()
+                    .map(|s| s == "full")
+                    .unwrap_or(false),
+            };
+            writers::json::write_with_config(&pandoc, &context, &mut buf, &json_config).map_err(
+                |e| {
+                    vec![
+                        quarto_error_reporting::DiagnosticMessageBuilder::error(
+                            "IO error during write",
+                        )
+                        .with_code("Q-3-1")
+                        .problem(format!("Failed to write JSON output: {}", e))
+                        .build(),
+                    ]
+                },
+            )
+        }
         "json-block" => {
             if let Some(line_number) = args.line_number {
-                writers::json_block::write(&pandoc, &context, line_number, &mut buf)
+                writers::json_block::write(&pandoc, &context, line_number, &mut buf).map_err(|e| {
+                    vec![
+                        quarto_error_reporting::DiagnosticMessageBuilder::error(
+                            "IO error during write",
+                        )
+                        .with_code("Q-3-1")
+                        .problem(format!("Failed to write JSON block output: {}", e))
+                        .build(),
+                    ]
+                })
             } else {
                 eprintln!("--line-number is required when using --to json-block");
                 std::process::exit(1);
             }
         }
-        "native" => writers::native::write(&pandoc, &mut buf),
-        "markdown" | "qmd" => writers::qmd::write(&pandoc, &mut buf),
-        "R" => writers::r::write(&pandoc, &context, &mut buf),
-        "html" => writers::html::write(&pandoc, &mut buf),
+        "native" => writers::native::write(&pandoc, &context, &mut buf),
+        "markdown" | "qmd" => writers::qmd::write(&pandoc, &mut buf).map_err(|e| {
+            vec![
+                quarto_error_reporting::DiagnosticMessageBuilder::error("IO error during write")
+                    .with_code("Q-3-1")
+                    .problem(format!("Failed to write QMD output: {}", e))
+                    .build(),
+            ]
+        }),
+        "R" => writers::r::write(&pandoc, &context, &mut buf).map_err(|e| {
+            vec![
+                quarto_error_reporting::DiagnosticMessageBuilder::error("IO error during write")
+                    .with_code("Q-3-1")
+                    .problem(format!("Failed to write R output: {}", e))
+                    .build(),
+            ]
+        }),
+        "html" => writers::html::write(&pandoc, &mut buf).map_err(|e| {
+            vec![
+                quarto_error_reporting::DiagnosticMessageBuilder::error("IO error during write")
+                    .with_code("Q-3-1")
+                    .problem(format!("Failed to write HTML output: {}", e))
+                    .build(),
+            ]
+        }),
         #[cfg(feature = "terminal-support")]
-        "ansi" => writers::ansi::write(&pandoc, &mut buf),
+        "ansi" => writers::ansi::write(&pandoc, &mut buf).map_err(|e| {
+            vec![
+                quarto_error_reporting::DiagnosticMessageBuilder::error("IO error during write")
+                    .with_code("Q-3-1")
+                    .problem(format!("Failed to write ANSI output: {}", e))
+                    .build(),
+            ]
+        }),
         _ => {
             eprintln!("Unknown output format: {}", args.to);
-            return;
+            std::process::exit(1);
         }
+    };
+
+    if let Err(diagnostics) = writer_result {
+        // Format and output writer errors
+        if args.json_errors {
+            for diagnostic in diagnostics {
+                eprintln!("{}", diagnostic.to_json());
+            }
+        } else {
+            for diagnostic in diagnostics {
+                eprintln!("{}", diagnostic.to_text(Some(&context.source_context)));
+            }
+        }
+        std::process::exit(1);
     }
-    .unwrap();
 
     // Write output to file or stdout
     if let Some(output_path) = args.output {

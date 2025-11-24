@@ -9,20 +9,20 @@ use regex::Regex;
 use std::fs;
 use std::path::PathBuf;
 
-/// Test that all files in resources/error-corpus/*.qmd produce ariadne-formatted errors
+/// Test that all files in resources/error-corpus/case-files/*.qmd produce ariadne-formatted errors
 /// with file:line:column information and source code snippets.
 #[test]
 fn test_error_corpus_ariadne_output() {
-    let corpus_dir = PathBuf::from("resources/error-corpus");
+    let corpus_dir = PathBuf::from("resources/error-corpus/case-files");
     assert!(
         corpus_dir.exists(),
-        "Error corpus directory should exist: {}",
+        "Error corpus case-files directory should exist: {}",
         corpus_dir.display()
     );
 
-    // Find all .qmd files in the error corpus
+    // Find all .qmd files in the case-files directory
     let mut qmd_files: Vec<PathBuf> = fs::read_dir(&corpus_dir)
-        .expect("Failed to read error corpus directory")
+        .expect("Failed to read error corpus case-files directory")
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let path = entry.path();
@@ -48,8 +48,13 @@ fn test_error_corpus_ariadne_output() {
     for qmd_file in &qmd_files {
         println!("Testing error corpus file: {}", qmd_file.display());
 
-        let content = fs::read_to_string(qmd_file)
+        let mut content = fs::read_to_string(qmd_file)
             .unwrap_or_else(|e| panic!("Failed to read {}: {}", qmd_file.display(), e));
+
+        // Ensure content ends with newline (matching what main.rs does)
+        if !content.ends_with('\n') {
+            content.push('\n');
+        }
 
         // Parse the file - we expect it to fail with diagnostics
         let result = quarto_markdown_pandoc::readers::qmd::read(
@@ -57,6 +62,8 @@ fn test_error_corpus_ariadne_output() {
             false, // not loose mode
             &qmd_file.to_string_lossy(),
             &mut std::io::sink(),
+            true, // prune errors
+            None,
         );
 
         match result {
@@ -115,20 +122,20 @@ fn test_error_corpus_ariadne_output() {
     }
 }
 
-/// Test that all files in resources/error-corpus/*.qmd produce JSON errors
+/// Test that all files in resources/error-corpus/case-files/*.qmd produce JSON errors
 /// with proper source location information (file_id and offsets).
 #[test]
 fn test_error_corpus_json_locations() {
-    let corpus_dir = PathBuf::from("resources/error-corpus");
+    let corpus_dir = PathBuf::from("resources/error-corpus/case-files");
     assert!(
         corpus_dir.exists(),
-        "Error corpus directory should exist: {}",
+        "Error corpus case-files directory should exist: {}",
         corpus_dir.display()
     );
 
-    // Find all .qmd files in the error corpus
+    // Find all .qmd files in the case-files directory
     let mut qmd_files: Vec<PathBuf> = fs::read_dir(&corpus_dir)
-        .expect("Failed to read error corpus directory")
+        .expect("Failed to read error corpus case-files directory")
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let path = entry.path();
@@ -150,8 +157,13 @@ fn test_error_corpus_json_locations() {
     for qmd_file in &qmd_files {
         println!("Testing JSON error locations for: {}", qmd_file.display());
 
-        let content = fs::read_to_string(qmd_file)
+        let mut content = fs::read_to_string(qmd_file)
             .unwrap_or_else(|e| panic!("Failed to read {}: {}", qmd_file.display(), e));
+
+        // Ensure content ends with newline (matching what main.rs does)
+        if !content.ends_with('\n') {
+            content.push('\n');
+        }
 
         // Parse the file - we expect it to fail with diagnostics
         let result = quarto_markdown_pandoc::readers::qmd::read(
@@ -159,6 +171,8 @@ fn test_error_corpus_json_locations() {
             false, // not loose mode
             &qmd_file.to_string_lossy(),
             &mut std::io::sink(),
+            true, // prune errors
+            None,
         );
 
         match result {
@@ -252,8 +266,13 @@ fn test_error_corpus_text_snapshots() {
             Ok(path) => {
                 eprintln!("Testing error snapshot (text): {}", path.display());
 
-                let content = fs::read_to_string(&path)
+                let mut content = fs::read_to_string(&path)
                     .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+
+                // Ensure content ends with newline (matching what main.rs does)
+                if !content.ends_with('\n') {
+                    content.push('\n');
+                }
 
                 // Parse the file - we expect it to fail with diagnostics
                 let result = quarto_markdown_pandoc::readers::qmd::read(
@@ -261,6 +280,8 @@ fn test_error_corpus_text_snapshots() {
                     false,
                     &path.to_string_lossy(),
                     &mut std::io::sink(),
+                    true, // prune errors
+                    None,
                 );
 
                 match result {
@@ -275,10 +296,15 @@ fn test_error_corpus_text_snapshots() {
                         let mut source_context = quarto_source_map::SourceContext::new();
                         source_context.add_file(path.to_string_lossy().to_string(), Some(content));
 
-                        // Render all diagnostics to text
+                        // Render all diagnostics to text with hyperlinks disabled
+                        // (to avoid absolute path differences in snapshots across systems)
+                        let render_options = quarto_error_reporting::TextRenderOptions {
+                            enable_hyperlinks: false,
+                        };
                         let mut error_output = String::new();
                         for diagnostic in &diagnostics {
-                            let text_output = diagnostic.to_text(Some(&source_context));
+                            let text_output = diagnostic
+                                .to_text_with_options(Some(&source_context), &render_options);
                             error_output.push_str(&text_output);
                             error_output.push('\n');
                         }
@@ -317,8 +343,13 @@ fn test_error_corpus_json_snapshots() {
             Ok(path) => {
                 eprintln!("Testing error snapshot (json): {}", path.display());
 
-                let content = fs::read_to_string(&path)
+                let mut content = fs::read_to_string(&path)
                     .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+
+                // Ensure content ends with newline (matching what main.rs does)
+                if !content.ends_with('\n') {
+                    content.push('\n');
+                }
 
                 // Parse the file - we expect it to fail with diagnostics
                 let result = quarto_markdown_pandoc::readers::qmd::read(
@@ -326,6 +357,8 @@ fn test_error_corpus_json_snapshots() {
                     false,
                     &path.to_string_lossy(),
                     &mut std::io::sink(),
+                    true, // prune errors
+                    None,
                 );
 
                 match result {

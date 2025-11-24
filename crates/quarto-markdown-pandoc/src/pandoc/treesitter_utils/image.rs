@@ -3,7 +3,8 @@
  * Copyright (c) 2025 Posit, PBC
  */
 
-use std::{collections::HashMap, io::Write};
+use hashlink::LinkedHashMap;
+use std::io::Write;
 
 use crate::pandoc::{
     Image, Inline, ast_context::ASTContext, inline::Target,
@@ -21,7 +22,7 @@ pub fn process_image<T: Write, F>(
 where
     F: Fn() -> String,
 {
-    let mut attr = ("".to_string(), vec![], HashMap::new());
+    let mut attr = ("".to_string(), vec![], LinkedHashMap::new());
     let mut attr_source = crate::pandoc::attr::AttrSourceInfo::empty();
     let mut target: Target = ("".to_string(), "".to_string());
     let mut target_source = crate::pandoc::attr::TargetSourceInfo::empty();
@@ -51,16 +52,12 @@ where
                 if node == "link_destination" {
                     target.0 = text; // URL
                     target_source.url = Some(
-                        crate::pandoc::source_map_compat::range_to_source_info_with_context(
-                            &range, context,
-                        ),
+                        crate::pandoc::location::range_to_source_info_with_context(&range, context),
                     );
                 } else if node == "link_title" {
                     target.1 = text; // Title
                     target_source.title = Some(
-                        crate::pandoc::source_map_compat::range_to_source_info_with_context(
-                            &range, context,
-                        ),
+                        crate::pandoc::location::range_to_source_info_with_context(&range, context),
                     );
                 } else if node == "language_attribute" {
                     // TODO show position of this error

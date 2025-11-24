@@ -23,6 +23,8 @@ pub struct ErrorNote {
     pub note_type: &'static str,
     pub label_begin: Option<&'static str>,
     pub label_end: Option<&'static str>,
+    pub trim_leading_space: Option<bool>,
+    pub trim_trailing_space: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -32,6 +34,7 @@ pub struct ErrorInfo {
     pub message: &'static str,
     pub captures: &'static [ErrorCapture],
     pub notes: &'static [ErrorNote],
+    pub hints: &'static [&'static str],
 }
 
 #[derive(Debug)]
@@ -60,16 +63,12 @@ pub fn lookup_error_message(process_message: &ProcessMessage) -> Option<&'static
     None
 }
 
-pub fn lookup_error_entry(process_message: &ProcessMessage) -> Option<&'static ErrorTableEntry> {
+pub fn lookup_error_entry(process_message: &ProcessMessage) -> Vec<&'static ErrorTableEntry> {
     let table = get_error_table();
-
-    for entry in table {
-        if entry.state == process_message.state && entry.sym == process_message.sym {
-            return Some(entry);
-        }
-    }
-
-    None
+    table
+        .into_iter()
+        .filter(|entry| entry.state == process_message.state && entry.sym == process_message.sym)
+        .collect()
 }
 
 #[cfg(test)]

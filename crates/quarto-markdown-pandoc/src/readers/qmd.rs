@@ -3,8 +3,7 @@
  * Copyright (c) 2025 Posit, PBC
  */
 
-use crate::errors;
-use crate::errors::parse_is_good;
+// Note: parse_is_good no longer used - log_observer.had_errors() handles parse errors
 use crate::filters::FilterReturn::Unchanged;
 use crate::filters::topdown_traverse;
 use crate::filters::{Filter, FilterReturn};
@@ -16,6 +15,7 @@ use crate::pandoc::{self, Block, MetaValueWithSourceInfo};
 use crate::readers::qmd_error_messages::{produce_diagnostic_messages, produce_error_message_json};
 use crate::traversals;
 use crate::utils::diagnostic_collector::DiagnosticCollector;
+use crate::utils::tree_sitter_log_observer::TreeSitterLogObserverTrait;
 use std::io::Write;
 use tree_sitter::LogType;
 use tree_sitter_qmd::MarkdownParser;
@@ -55,6 +55,8 @@ pub fn read<T: Write>(
     _loose: bool,
     filename: &str,
     mut output_stream: &mut T,
+    prune_errors: bool,
+    parent_source_info: Option<quarto_source_map::SourceInfo>,
 ) -> Result<
     (
         pandoc::Pandoc,
@@ -64,13 +66,15 @@ pub fn read<T: Write>(
     Vec<quarto_error_reporting::DiagnosticMessage>,
 > {
     let mut parser = MarkdownParser::default();
-
+    let mut fast_log_observer =
+        crate::utils::tree_sitter_log_observer::TreeSitterLogObserverFast::default();
     let mut log_observer = crate::utils::tree_sitter_log_observer::TreeSitterLogObserver::default();
+
     parser
         .parser
         .set_logger(Some(Box::new(|log_type, message| match log_type {
             LogType::Parse => {
-                log_observer.log(log_type, message);
+                fast_log_observer.log(log_type, message);
             }
             _ => {}
         })));
@@ -80,7 +84,14 @@ pub fn read<T: Write>(
         let mut input_bytes_with_newline = Vec::with_capacity(input_bytes.len() + 1);
         input_bytes_with_newline.extend_from_slice(input_bytes);
         input_bytes_with_newline.push(b'\n');
-        return read(&input_bytes_with_newline, _loose, filename, output_stream);
+        return read(
+            &input_bytes_with_newline,
+            _loose,
+            filename,
+            output_stream,
+            prune_errors,
+            parent_source_info,
+        );
     }
 
     let tree = parser
@@ -89,6 +100,8 @@ pub fn read<T: Write>(
 
     // Create ASTContext early so we can use it for error diagnostics
     let mut context = ASTContext::with_filename(filename.to_string());
+    // Store parent source info for recursive parses
+    context.parent_source_info = parent_source_info;
     // Add the input content to the SourceContext for proper error rendering
     let input_str = String::from_utf8_lossy(input_bytes).to_string();
     context.source_context = quarto_source_map::SourceContext::new();
@@ -96,23 +109,52 @@ pub fn read<T: Write>(
         .source_context
         .add_file(filename.to_string(), Some(input_str));
 
-    log_observer.parses.iter().for_each(|parse| {
-        writeln!(output_stream, "tree-sitter parse:").unwrap();
-        parse
-            .messages
-            .iter()
-            .for_each(|msg| writeln!(output_stream, "  {}", msg).unwrap());
-        writeln!(output_stream, "---").unwrap();
-    });
-    if log_observer.had_errors() {
-        // Produce structured DiagnosticMessage objects with proper source locations
-        let diagnostics = produce_diagnostic_messages(
-            input_bytes,
-            &log_observer,
-            filename,
-            &context.source_context,
-        );
-        return Err(diagnostics);
+    // if fast observer saw an error, reparse with full log observer to
+    // capture tokens and report good error
+    if fast_log_observer.had_errors() {
+        parser
+            .parser
+            .set_logger(Some(Box::new(|log_type, message| match log_type {
+                LogType::Parse => {
+                    log_observer.log(log_type, message);
+                }
+                _ => {}
+            })));
+        parser
+            .parse(&input_bytes, None)
+            .expect("Failed to parse input");
+        log_observer.parses.iter().for_each(|parse| {
+            writeln!(output_stream, "tree-sitter parse:").unwrap();
+            parse
+                .messages
+                .iter()
+                .for_each(|msg| writeln!(output_stream, "  {}", msg).unwrap());
+            writeln!(output_stream, "---").unwrap();
+        });
+        if log_observer.had_errors() {
+            // Produce structured DiagnosticMessage objects with proper source locations
+            let mut diagnostics = produce_diagnostic_messages(
+                input_bytes,
+                &log_observer,
+                filename,
+                &context.source_context,
+            );
+
+            // Prune diagnostics based on ERROR nodes if enabled
+            if prune_errors {
+                use crate::readers::qmd_error_messages::{
+                    collect_error_node_ranges, get_outer_error_nodes,
+                    prune_diagnostics_by_error_nodes,
+                };
+
+                let error_nodes = collect_error_node_ranges(&tree);
+                let outer_nodes = get_outer_error_nodes(&error_nodes);
+                diagnostics =
+                    prune_diagnostics_by_error_nodes(diagnostics, &error_nodes, &outer_nodes);
+            }
+
+            return Err(diagnostics);
+        }
     }
 
     let depth = crate::utils::concrete_tree_depth::concrete_tree_depth(&tree);
@@ -126,18 +168,11 @@ pub fn read<T: Write>(
         return Err(vec![diagnostic]);
     }
 
-    let errors = parse_is_good(&tree);
+    // Note: We no longer need to check parse_is_good(&tree) here because
+    // the log_observer.had_errors() check above already catches parse errors
+    // and produces better formatted diagnostics via produce_diagnostic_messages.
+    // The old parse_is_good check was causing duplicate error messages.
     print_whole_tree(&mut tree.walk(), &mut output_stream);
-    if !errors.is_empty() {
-        let mut cursor = tree.walk();
-        let mut diagnostics = Vec::new();
-        for error in errors {
-            cursor.goto_id(error);
-            let error_msg = errors::error_message(&mut cursor, &input_bytes);
-            diagnostics.push(quarto_error_reporting::generic_error!(error_msg));
-        }
-        return Err(diagnostics);
-    }
 
     // Create diagnostic collector and convert to Pandoc AST
     let mut error_collector = DiagnosticCollector::new();

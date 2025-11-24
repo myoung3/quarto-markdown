@@ -9,6 +9,7 @@ use std::collections::HashMap; // Still needed for TreeSitterParseLog::processes
 pub enum TreeSitterLogState {
     Idle,
     InParse,
+    JustReduced,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -36,6 +37,7 @@ pub struct TreeSitterParseLog {
     pub current_process: Option<usize>,
     pub current_lookahead: Option<(String, usize)>,
     pub processes: HashMap<usize, TreeSitterProcessLog>,
+    pub all_tokens: Vec<ConsumedToken>,
     pub consumed_tokens: Vec<ConsumedToken>, // row, column, size, LR state
 }
 
@@ -66,11 +68,43 @@ impl TreeSitterParseLog {
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+pub trait TreeSitterLogObserverTrait {
+    fn had_errors(&self) -> bool;
+    fn log(&mut self, log_type: tree_sitter::LogType, message: &str);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub struct TreeSitterLogObserverFast {
+    pub saw_error: bool,
+}
+
+impl Default for TreeSitterLogObserverFast {
+    fn default() -> Self {
+        TreeSitterLogObserverFast { saw_error: false }
+    }
+}
+
+impl TreeSitterLogObserverTrait for TreeSitterLogObserverFast {
+    fn had_errors(&self) -> bool {
+        self.saw_error
+    }
+    fn log(&mut self, _log_type: tree_sitter::LogType, message: &str) {
+        if message.starts_with("detect_error") {
+            self.saw_error = true
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 pub struct TreeSitterLogObserver {
     pub parses: Vec<TreeSitterParseLog>,
     state: TreeSitterLogState,
 }
 
+// need both impl and trait? Smells like bad design :/
 impl TreeSitterLogObserver {
     pub fn had_errors(&self) -> bool {
         for parse in &self.parses {
@@ -80,7 +114,18 @@ impl TreeSitterLogObserver {
         }
         false
     }
-    pub fn log(&mut self, _log_type: tree_sitter::LogType, message: &str) {
+}
+
+impl TreeSitterLogObserverTrait for TreeSitterLogObserver {
+    fn had_errors(&self) -> bool {
+        for parse in &self.parses {
+            if !parse.is_good() {
+                return true;
+            }
+        }
+        false
+    }
+    fn log(&mut self, _log_type: tree_sitter::LogType, message: &str) {
         // Implement your logging logic here
         let words: Vec<&str> = message.split_whitespace().collect();
         if words.is_empty() {
@@ -99,6 +144,7 @@ impl TreeSitterLogObserver {
         let mut col: Option<usize> = None;
         let mut sym: Option<&str> = None;
         let mut size: Option<usize> = None;
+        let mut child_count: Option<usize> = None;
 
         // Single pass through parameters
         for pair in &words[1..] {
@@ -111,6 +157,7 @@ impl TreeSitterLogObserver {
                     "col" => col = value.parse().ok(),
                     "sym" => sym = Some(value),
                     "size" => size = value.parse().ok(),
+                    "child_count" => child_count = value.parse().ok(),
                     _ => {} // Ignore unknown parameters
                 }
             }
@@ -127,13 +174,42 @@ impl TreeSitterLogObserver {
                     current_process: None,
                     current_lookahead: None,
                     consumed_tokens: vec![],
+                    all_tokens: vec![],
                 });
             }
             "done" => {
-                if self.state != TreeSitterLogState::InParse {
-                    panic!("Received 'done' while not in parse");
+                if self.state == TreeSitterLogState::Idle {
+                    panic!("Received 'done' while idle");
                 }
                 self.state = TreeSitterLogState::Idle;
+            }
+            "reduce" => {
+                let child_count = child_count.unwrap();
+                if child_count > 0 {
+                    let current_parse = self
+                        .parses
+                        .last_mut()
+                        .expect("No current parse to log process to");
+                    // after error correction we might have a completely messed up tree, but it should be good for the first error.
+                    if current_parse.consumed_tokens.len() >= child_count {
+                        let popped_tokens = current_parse
+                            .consumed_tokens
+                            .split_off(current_parse.consumed_tokens.len() - child_count);
+                        let row = popped_tokens.get(0).unwrap().row;
+                        let column = popped_tokens.get(0).unwrap().column;
+                        let size = popped_tokens.iter().map(|x| x.size).sum();
+                        let new_token = ConsumedToken {
+                            row,
+                            column,
+                            size,
+                            lr_state: 0,
+                            sym: sym.unwrap().to_string().clone(),
+                        };
+                        current_parse.consumed_tokens.push(new_token);
+                        current_parse.all_tokens.extend(popped_tokens);
+                    }
+                    self.state = TreeSitterLogState::JustReduced;
+                }
             }
             "resume" => {
                 let version = version.expect("Missing 'version' in process log");
@@ -230,13 +306,35 @@ impl TreeSitterLogObserver {
                     .as_ref()
                     .map(|(_, s)| *s)
                     .unwrap_or(0);
-                current_parse.consumed_tokens.push(ConsumedToken {
-                    lr_state: state_val,
-                    row: current_process_message.row,
-                    column: current_process_message.column,
-                    size,
-                    sym: current_process_message.sym.clone(), // TODO would prefer not to clone here
-                })
+                match self.state {
+                    TreeSitterLogState::InParse => {
+                        let new_token = ConsumedToken {
+                            lr_state: state_val,
+                            row: current_process_message.row,
+                            column: current_process_message.column,
+                            size,
+                            sym: current_process_message.sym.clone(), // TODO would prefer not to clone here
+                        };
+                        current_parse.consumed_tokens.push(new_token)
+                    }
+                    TreeSitterLogState::JustReduced => {
+                        let last: &mut ConsumedToken =
+                            current_parse.consumed_tokens.last_mut().unwrap();
+                        last.lr_state = state_val;
+                        self.state = TreeSitterLogState::InParse;
+                        let new_token = ConsumedToken {
+                            lr_state: state_val,
+                            row: current_process_message.row,
+                            column: current_process_message.column,
+                            size,
+                            sym: current_process_message.sym.clone(), // TODO would prefer not to clone here
+                        };
+                        current_parse.consumed_tokens.push(new_token)
+                    }
+                    _ => {
+                        eprintln!("Shouldn't be here!");
+                    }
+                }
             }
             "skip_token" | "recover_to_previous" => {
                 // we want to mark these processes as bad, but we don't want to record the state here
@@ -251,7 +349,7 @@ impl TreeSitterLogObserver {
                     .expect("No current process message");
                 current_process.found_bad_message = true;
             }
-            "lex_external" | "lex_internal" | "reduce" => {}
+            "lex_external" | "lex_internal" => {}
             "accept" => {
                 let current_parse = self
                     .parses
@@ -264,7 +362,7 @@ impl TreeSitterLogObserver {
                 current_process.found_accept = true;
             }
             _ => {
-                if self.state != TreeSitterLogState::InParse {
+                if self.state == TreeSitterLogState::Idle {
                     return;
                 }
             }
